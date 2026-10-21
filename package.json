@@ -1,0 +1,32 @@
+{
+  "name": "smart-context-cli",
+  "version": "0.1.0",
+  "description": "Analiza un archivo TypeScript, extrae sus imports locales y genera un paquete de contexto optimizado.",
+  "type": "module",
+  "bin": {
+    "smart-context": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "commander": "^14.0.0",
+    "typescript": "^5.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.20.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
+}
