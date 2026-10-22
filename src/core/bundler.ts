@@ -1,4 +1,5 @@
 import { relative } from 'node:path';
+import { formatSectionHeader } from './bundle-format.js';
 import type { DependencyGraph } from './graph.js';
 import type { TrimResult } from './trimmer.js';
 
@@ -19,7 +20,7 @@ export function buildBundle(graph: DependencyGraph, rootDir: string, results: re
   const sections = results.map((result) => {
     const note =
       result.wholeReason === null ? ` [trimmed: ${result.originalLines} -> ${result.keptLines} lines]` : '';
-    return `// ===== FILE: ${toDisplay(result.file)}${note} =====\n${result.content}\n`;
+    return `${formatSectionHeader(toDisplay(result.file), note)}\n${result.content}\n`;
   });
 
   return [header, ...sections].join('\n');

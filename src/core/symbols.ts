@@ -1,15 +1,12 @@
 import ts from 'typescript';
 import type { DependencyGraph } from './graph.js';
-import { isLocalSpecifier } from './imports.js';
 import { parseFile } from './parser.js';
-import { resolveLocalImport } from './resolver.js';
+import type { ModuleResolver } from './resolver.js';
 
-/** Motivos por los que un archivo no se puede recortar de forma segura. */
 export type WholeReason = 'namespace' | 'export-all' | 'side-effect' | 'dynamic-import';
 
 export interface ImportRecord {
   specifier: string;
-  /** Nombres exportados que se piden al módulo destino ('default' incluido). */
   names: string[];
   whole: WholeReason | null;
 }
@@ -26,7 +23,6 @@ export interface FileUsage {
 type ReadResult = Pick<ImportRecord, 'names' | 'whole'>;
 
 function finish(names: string[]): ReadResult {
-  // Sin nombres (p. ej. `import {} from './x'`) el módulo igual se ejecuta.
   return names.length > 0 ? { names, whole: null } : { names, whole: 'side-effect' };
 }
 
@@ -39,7 +35,6 @@ function readImportClause(clause: ts.ImportClause | undefined): ReadResult {
   const bindings = clause.namedBindings;
   if (bindings !== undefined) {
     if (ts.isNamespaceImport(bindings)) return { names, whole: 'namespace' };
-    // En `import { a as b }` el nombre exportado por el destino es `a`.
     for (const element of bindings.elements) {
       names.push((element.propertyName ?? element.name).text);
     }
@@ -56,12 +51,15 @@ function readExportClause(node: ts.ExportDeclaration): ReadResult {
   return finish(clause.elements.map((element) => (element.propertyName ?? element.name).text));
 }
 
-/** Extrae, por cada import/re-export local, qué nombres pide del módulo destino. */
+/**
+ * Extrae, por cada import/re-export con string literal, qué nombres pide del módulo destino.
+ * Incluye también paquetes externos: el resolver decide después cuáles son locales.
+ */
 export function collectImportRecords(sourceFile: ts.SourceFile): ImportRecord[] {
   const records: ImportRecord[] = [];
 
   const push = (specifier: string, result: ReadResult): void => {
-    if (isLocalSpecifier(specifier)) records.push({ specifier, ...result });
+    records.push({ specifier, ...result });
   };
 
   const visit = (node: ts.Node): void => {
@@ -96,16 +94,15 @@ function createAccumulator(): Accumulator {
   return { names: new Set(), reasons: new Set(), importedBy: new Set() };
 }
 
-/** Para cada archivo del grafo: qué símbolos le piden sus importadores. */
-export function buildUsageTable(graph: DependencyGraph): FileUsage[] {
+export function buildUsageTable(graph: DependencyGraph, resolver: ModuleResolver): FileUsage[] {
   const accumulators = new Map<string, Accumulator>(
     graph.files.map((file) => [file, createAccumulator()]),
   );
 
   for (const file of graph.files) {
     for (const record of collectImportRecords(parseFile(file))) {
-      const resolved = resolveLocalImport(file, record.specifier);
-      const target = resolved === null ? undefined : accumulators.get(resolved);
+      const resolution = resolver.resolve(file, record.specifier);
+      const target = resolution.kind === 'local' ? accumulators.get(resolution.file) : undefined;
       if (target === undefined) continue;
 
       for (const name of record.names) target.names.add(name);

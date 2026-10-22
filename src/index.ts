@@ -1,10 +1,9 @@
 #!/usr/bin/env node
-import { buildBundle } from './core/bundler.js';
 import { buildExportIndex, type FileExports } from './core/exports.js';
-import { buildDependencyGraph } from './core/graph.js';
+import { analyze, assemble } from './core/pipeline.js';
 import { buildUsageTable, type FileUsage } from './core/symbols.js';
-import { solveContext } from './core/solver.js';
-import { keepAll, type TrimResult } from './core/trimmer.js';
+import type { TrimResult } from './core/trimmer.js';
+import { formatReport, validateBundleText } from './core/validator.js';
 import { existsSync, statSync, writeFileSync } from 'node:fs';
 import { extname, relative, resolve } from 'node:path';
 import { Command } from 'commander';
@@ -12,8 +11,10 @@ import { Command } from 'commander';
 interface CliOptions {
   file: string;
   out?: string;
+  tsconfig?: string;
   symbols?: boolean;
   exports?: boolean;
+  validate?: boolean;
   trim: boolean;
 }
 
@@ -112,19 +113,29 @@ function main(argv: readonly string[]): void {
     .version('0.1.0')
     .requiredOption('-f, --file <path>', 'Ruta del archivo .ts a analizar')
     .option('-o, --out <path>', 'Archivo donde escribir el paquete de contexto')
+    .option('-c, --tsconfig <path>', 'tsconfig con los alias de paths (por defecto se busca desde el archivo de entrada)')
     .option('--symbols', 'Muestra qué símbolos usa cada archivo de sus dependencias')
     .option('--exports', 'Muestra las declaraciones de nivel superior y sus referencias internas')
+    .option('--validate', 'Compila el paquete recortado y falla si el recorte introdujo errores')
     .option('--no-trim', 'Incluye cada archivo completo, sin recortar')
     .parse(argv);
 
-  const { file, out, symbols, exports: showExports, trim } = program.opts<CliOptions>();
+  const { file, out, tsconfig, symbols, exports: showExports, validate, trim } = program.opts<CliOptions>();
 
   try {
     const targetFile = resolveTargetFile(file);
-    const graph = buildDependencyGraph(targetFile);
+    const context = analyze(targetFile, tsconfig);
+    const { graph } = context;
     const show = (path: string): string => relative(process.cwd(), path);
 
     console.log(`Archivo de entrada: ${show(graph.entry)}`);
+    if (context.tsconfig !== null) {
+      const aliases = context.tsconfig.pathPatterns.length;
+      console.log(`tsconfig: ${show(context.tsconfig.path)} (${aliases} alias en paths)`);
+    } else {
+      console.log('tsconfig: no encontrado, se usan opciones por defecto (los alias no se resolverán)');
+    }
+
     console.log(`Archivos en el contexto (${graph.files.length}):`);
     for (const path of graph.files) {
       console.log(`  ${show(path)}`);
@@ -138,25 +149,37 @@ function main(argv: readonly string[]): void {
     }
 
     if (symbols === true) {
-      printUsage(buildUsageTable(graph), show);
+      printUsage(buildUsageTable(graph, context.resolver), show);
     }
 
     if (showExports === true) {
       printExports(buildExportIndex(graph), show);
     }
 
-    if (out !== undefined) {
-      const solved = trim ? solveContext(graph) : undefined;
-      const results = solved?.results ?? keepAll(graph);
-      printTrimReport(results, show);
+    if (out !== undefined || validate === true) {
+      const assembly = assemble(context, process.cwd(), trim);
+      printTrimReport(assembly.results, show);
 
-      if (solved !== undefined && solved.dropped.length > 0) {
-        console.log(`Archivos descartados (${solved.dropped.length}): ${solved.dropped.map(show).join(', ')}`);
+      if (assembly.dropped.length > 0) {
+        console.log(`Archivos descartados (${assembly.dropped.length}): ${assembly.dropped.map(show).join(', ')}`);
       }
 
-      const outPath = resolve(process.cwd(), out);
-      writeFileSync(outPath, buildBundle(graph, process.cwd(), results), 'utf8');
-      console.log(`Paquete escrito en: ${show(outPath)}`);
+      if (out !== undefined) {
+        const outPath = resolve(process.cwd(), out);
+        writeFileSync(outPath, assembly.text, 'utf8');
+        console.log(`Paquete escrito en: ${show(outPath)}`);
+      }
+
+      if (validate === true) {
+        const report = validateBundleText(assembly.text, {
+          rootDir: process.cwd(),
+          tsconfigPath: tsconfig,
+          baseline: true,
+        });
+        const label = out !== undefined ? show(resolve(process.cwd(), out)) : 'el paquete generado';
+        console.log(formatReport(report, label));
+        if (!report.ok) process.exitCode = 1;
+      }
     }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);

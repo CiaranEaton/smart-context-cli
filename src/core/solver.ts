@@ -1,7 +1,7 @@
 import ts from 'typescript';
 import { analyzeExports, type FileExports } from './exports.js';
 import type { DependencyGraph } from './graph.js';
-import { resolveLocalImport } from './resolver.js';
+import type { ModuleResolver } from './resolver.js';
 import { collectImportRecords, type FileUsage, type WholeReason } from './symbols.js';
 import { trimFile, type TrimResult } from './trimmer.js';
 
@@ -12,11 +12,8 @@ interface Demand {
 }
 
 export interface SolveResult {
-  /** Archivos que quedan en el paquete, en el orden del grafo original. */
   results: TrimResult[];
-  /** Archivos del grafo original que nadie necesita tras el recorte. */
   dropped: string[];
-  /** Cuántas veces se recortó un archivo (incluye repeticiones por demanda nueva). */
   renders: number;
 }
 
@@ -36,7 +33,7 @@ function toUsage(file: string, demand: Demand, entry: string): FileUsage {
   };
 }
 
-export function solveContext(graph: DependencyGraph): SolveResult {
+export function solveContext(graph: DependencyGraph, resolver: ModuleResolver): SolveResult {
   const knownFiles = new Set(graph.files);
   const demands = new Map<string, Demand>([[graph.entry, createDemand()]]);
   const exportsCache = new Map<string, FileExports>();
@@ -62,11 +59,11 @@ export function solveContext(graph: DependencyGraph): SolveResult {
     rendered.set(file, result);
     renders++;
 
-    // Lo que este archivo, ya recortado, pide a sus dependencias.
     const trimmed = ts.createSourceFile(file, result.content, ts.ScriptTarget.Latest, true);
     for (const record of collectImportRecords(trimmed)) {
-      const target = resolveLocalImport(file, record.specifier);
-      if (target === null || !knownFiles.has(target)) continue;
+      const resolution = resolver.resolve(file, record.specifier);
+      if (resolution.kind !== 'local' || !knownFiles.has(resolution.file)) continue;
+      const target = resolution.file;
 
       let targetDemand = demands.get(target);
       let changed = false;

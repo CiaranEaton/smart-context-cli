@@ -4,7 +4,8 @@
   "description": "Analiza un archivo TypeScript, extrae sus imports locales y genera un paquete de contexto optimizado.",
   "type": "module",
   "bin": {
-    "smart-context": "./dist/index.js"
+    "smart-context": "./dist/index.js",
+    "smart-context-validate": "./dist/validate.js"
   },
   "files": [
     "dist"
@@ -14,9 +15,11 @@
   },
   "scripts": {
     "dev": "tsx src/index.ts",
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "validate": "tsx src/validate.ts",
+    "test": "tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "commander": "^14.0.0",
